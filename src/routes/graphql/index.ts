@@ -19,6 +19,12 @@ import depthLimit from 'graphql-depth-limit';
 import { createResolvers, createDataLoaders } from './resolvers.js';
 import { UUIDType } from './types/uuid.js';
 
+declare module 'fastify' {
+  interface FastifyInstance {
+    prisma: any;
+  }
+}
+
 const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
   const resolvers = createResolvers(fastify);
 
