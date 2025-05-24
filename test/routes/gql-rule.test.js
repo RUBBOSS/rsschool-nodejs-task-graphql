@@ -7,7 +7,9 @@ await test('gql-rule', async (t) => {
 
   await t.test('Trigger depth limit rule.', async (t) => {
     const { body: user1 } = await createUser(app);
-
+    const { body: user2 } = await createUser(app);
+    await subscribeTo(app, user1.id, user2.id);
+    
     const {
       body: { errors },
     } = await gqlQuery(app, {
