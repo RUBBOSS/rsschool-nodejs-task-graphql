@@ -3,19 +3,19 @@ import DataLoader from 'dataloader';
 import { parseResolveInfo } from 'graphql-parse-resolve-info';
 import { UUIDType } from './types/uuid.js';
 import { GraphQLResolveInfo } from 'graphql';
-import { User, SubscribersOnAuthors, Prisma } from '@prisma/client';
+import { User, Post, Profile, MemberType, SubscribersOnAuthors, Prisma, PrismaClient } from '@prisma/client';
 
 // Define data loader context interface
 interface DataLoaderContext {
   userSubscribedToLoader: DataLoader<string, User[]>;
   subscribedToUserLoader: DataLoader<string, User[]>;
-  postsByAuthorLoader: DataLoader<string, any[]>;
-  profilesByUserLoader: DataLoader<string, any>;
-  memberTypesByIdLoader: DataLoader<string, any>;
+  postsByAuthorLoader: DataLoader<string, Post[]>;
+  profilesByUserLoader: DataLoader<string, Profile | null>;
+  memberTypesByIdLoader: DataLoader<string, MemberType | null>;
 }
 
 // Factory function to create DataLoaders per request
-export function createDataLoaders(prisma: any) {
+export function createDataLoaders(prisma: PrismaClient) {
   return {
     // DataLoader for Posts by Author ID
     postsByAuthorLoader: new DataLoader(async (authorIds: readonly string[]) => {
@@ -109,7 +109,7 @@ export function createResolvers(fastify: FastifyInstance) {
       return await prisma.memberType.findUnique({
         where: { id },
       });
-    },    async users(_: unknown, _args: unknown, context: { dataLoaders: DataLoaderContext; app?: any }, info: GraphQLResolveInfo): Promise<User[]> {
+    },    async users(_: unknown, _args: unknown, context: { dataLoaders: DataLoaderContext }, info: GraphQLResolveInfo): Promise<User[]> {
       const { dataLoaders } = context;
       
       // Parse the GraphQL info to determine which fields the client requested
@@ -120,7 +120,7 @@ export function createResolvers(fastify: FastifyInstance) {
       
       // Special approach for the Loader Prime Test
       // The test looks for this exact structure with boolean values only
-      let findManyOptions: any;
+      let findManyOptions: Prisma.UserFindManyArgs = {};
       
       if (needsUserSubscribedTo && needsSubscribedToUser) {
         // Both relations needed
@@ -144,9 +144,6 @@ export function createResolvers(fastify: FastifyInstance) {
             subscribedToUser: true
           }
         };
-      } else {
-        // No relations needed
-        findManyOptions = {};
       }
       
       // Run a single query
@@ -230,42 +227,40 @@ export function createResolvers(fastify: FastifyInstance) {
       return await prisma.profile.findUnique({
         where: { id },
       });
-    },
-
-    // Mutation resolvers
-    async createUser({ dto }: { dto: any }) {
+    },    // Mutation resolvers
+    async createUser({ dto }: { dto: Prisma.UserCreateInput }) {
       return await prisma.user.create({
         data: dto,
       });
     },
 
-    async createProfile({ dto }: { dto: any }) {
+    async createProfile({ dto }: { dto: Prisma.ProfileCreateInput }) {
       return await prisma.profile.create({
         data: dto,
       });
     },
 
-    async createPost({ dto }: { dto: any }) {
+    async createPost({ dto }: { dto: Prisma.PostCreateInput }) {
       return await prisma.post.create({
         data: dto,
       });
     },
 
-    async changeUser({ id, dto }: { id: string; dto: any }) {
+    async changeUser({ id, dto }: { id: string; dto: Prisma.UserUpdateInput }) {
       return await prisma.user.update({
         where: { id },
         data: dto,
       });
     },
 
-    async changeProfile({ id, dto }: { id: string; dto: any }) {
+    async changeProfile({ id, dto }: { id: string; dto: Prisma.ProfileUpdateInput }) {
       return await prisma.profile.update({
         where: { id },
         data: dto,
       });
     },
 
-    async changePost({ id, dto }: { id: string; dto: any }) {
+    async changePost({ id, dto }: { id: string; dto: Prisma.PostUpdateInput }) {
       return await prisma.post.update({
         where: { id },
         data: dto,
@@ -314,28 +309,27 @@ export function createResolvers(fastify: FastifyInstance) {
       });
       return 'Unsubscribed';
     },
-    
-    // Field resolvers for nested data
+      // Field resolvers for nested data
     User: {
-      async profile(parent: any, _: any, context: any) {
+      async profile(parent: User, _: unknown, context: { dataLoaders: DataLoaderContext }) {
         return await context.dataLoaders.profilesByUserLoader.load(parent.id);
       },
 
-      async posts(parent: any, _: any, context: any) {
+      async posts(parent: User, _: unknown, context: { dataLoaders: DataLoaderContext }) {
         return await context.dataLoaders.postsByAuthorLoader.load(parent.id);
       },
 
-      async userSubscribedTo(parent: any, _: any, context: any) {
+      async userSubscribedTo(parent: User, _: unknown, context: { dataLoaders: DataLoaderContext }) {
         return await context.dataLoaders.userSubscribedToLoader.load(parent.id);
       },
 
-      async subscribedToUser(parent: any, _: any, context: any) {
+      async subscribedToUser(parent: User, _: unknown, context: { dataLoaders: DataLoaderContext }) {
         return await context.dataLoaders.subscribedToUserLoader.load(parent.id);
       },
     },
 
     Profile: {
-      async memberType(parent: any, _: any, context: any) {
+      async memberType(parent: { memberTypeId: string }, _: unknown, context: { dataLoaders: DataLoaderContext }) {
         return await context.dataLoaders.memberTypesByIdLoader.load(parent.memberTypeId);
       },
     },
