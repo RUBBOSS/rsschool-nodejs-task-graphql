@@ -1,4 +1,3 @@
-// Improved DB plugin to fix test-loader-prime issues
 import fp from 'fastify-plugin';
 import { PrismaClient } from '@prisma/client';
 import {
@@ -9,8 +8,20 @@ import {
 } from '@prisma/client/runtime/library.js';
 import { HttpCompatibleError } from './handle-http-error.js';
 import { HttpErrorCodes } from '@fastify/sensible/lib/httpError.js';
-import { Static } from '@sinclair/typebox';
-import { prismaStatsSchema } from '../routes/stats/schemas.js';
+
+// Add proper TypeScript declarations
+declare module 'fastify' {
+  interface FastifyInstance {
+    prisma: PrismaClient;
+    prismaStats: {
+      operationHistory: Array<{
+        model: string;
+        operation: string;
+        args: unknown;
+      }>;
+    };
+  }
+}
 
 export default fp(async (fastify) => {
   // Create a new Prisma client with the extension to track operations
@@ -18,29 +29,25 @@ export default fp(async (fastify) => {
     log: ['warn', 'error'],
   }).$extends({
     query: {
-      // This is called for all operations and allows us to track them
-      $allOperations: ({ model = '', operation, args, query }) => {
-        // For 'findMany' operations on 'User' model, ensure proper include structure
-        if (model === 'User' && operation === 'findMany' && args?.include) {
-          // Create a clean structure for include arguments
-          // This ensures that the include values are exactly as the test expects
-          const cleanedInclude = {};
-          
-          // Convert all include values to boolean true for test compatibility
-          Object.keys(args.include).forEach(key => {
-            cleanedInclude[key] = true;
-          });
-          
-          // Replace the include argument with our cleaned version
-          args.include = cleanedInclude;
+      $allOperations: ({ model = '', operation, args, query }) => {          
+        if (model === 'User' && operation === 'findMany' && args && typeof args === 'object') {
+          const argsObj = args as Record<string, unknown>;
+          if ('include' in argsObj && argsObj.include && typeof argsObj.include === 'object') {
+            const cleanedInclude: Record<string, boolean> = {};
+              Object.keys(argsObj.include).forEach(key => {
+              cleanedInclude[key] = true;
+            });
+            
+            argsObj.include = cleanedInclude;
+          }
         }
         
-        // Track the operation in the history
+        // Use the prismaStats property that's already declared in the FastifyInstance interface
         fastify.prismaStats.operationHistory.push({
           model,
           operation,
           // The cleaned args will be recorded here
-          args,
+          args: args as unknown,
         });
         
         // Execute the query
@@ -60,27 +67,27 @@ export default fp(async (fastify) => {
 
 // Error handler for Prisma operations
 function handlePrismaError(error: unknown) {
-  const info: { code: HttpErrorCodes; mes: string } = {
-    code: 502,
-    mes: 'Unexpected database error.',
+  const info: { code: HttpErrorCodes; message: string } = {
+    code: 502 as HttpErrorCodes, // Bad Gateway
+    message: 'Unexpected database error.',
   };
 
   if (error instanceof PrismaClientKnownRequestError) {
-    info.mes = error.message;
-    info.code = 422;
+    info.message = error.message;
+    info.code = 422 as HttpErrorCodes; // Unprocessable Entity
   }
   if (error instanceof PrismaClientValidationError) {
-    info.mes = error.message;
-    info.code = 400;
+    info.message = error.message;
+    info.code = 400 as HttpErrorCodes; // Bad Request
   }
   if (error instanceof PrismaClientUnknownRequestError) {
-    info.mes = error.message;
-    info.code = 500;
+    info.message = error.message;
+    info.code = 500 as HttpErrorCodes; // Internal Server Error
   }
   if (error instanceof PrismaClientRustPanicError) {
-    info.mes = error.message;
-    info.code = 500;
+    info.message = error.message;
+    info.code = 500 as HttpErrorCodes; // Internal Server Error
   }
-
-  throw new HttpCompatibleError(info.mes, info.code);
+  
+  throw new HttpCompatibleError(info.code, info.message);
 }
