@@ -173,7 +173,7 @@ export async function unsubscribeFrom(
 
 export async function getPrismaStats(app: FastifyInstance) {
   const res = await app.inject({
-    url: '/stats/prisma',
+    url: '/stats',
     method: 'GET',
   });
   const body = (await res.json()) as Static<typeof prismaStatsSchema>;

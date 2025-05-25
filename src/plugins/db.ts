@@ -24,6 +24,14 @@ const createExtendedPrisma = (fastifyInstance: FastifyInstance & { prismaStats: 
     query: {
       $allModels: {
         async $allOperations({ model, operation, args, query }) {
+          // Ensure prismaStats exists and has operationHistory array
+          if (!fastifyInstance.prismaStats) {
+            fastifyInstance.prismaStats = { operationHistory: [] };
+          }
+          if (!Array.isArray(fastifyInstance.prismaStats.operationHistory)) {
+            fastifyInstance.prismaStats.operationHistory = [];
+          }
+          
           // Track the operation
           fastifyInstance.prismaStats.operationHistory.push({
             model,
@@ -50,41 +58,23 @@ declare module 'fastify' {
 }
 
 export default fp(async (fastify) => {
-  // Initialize the stats tracking first
+  // Initialize the stats tracking first - ensure it exists before creating extended Prisma
   fastify.decorate('prismaStats', {
     operationHistory: [],
   });
 
-  // Create the extended Prisma client with operation tracking
-  const basePrisma = new PrismaClient({
-    log: ['warn', 'error'],
-  });
+  // Use the extended Prisma client with operation tracking
+  const extendedPrisma = createExtendedPrisma(fastify as FastifyInstance & { prismaStats: PrismaStats });
 
-  const extendedPrisma = basePrisma.$extends({
-    query: {
-      $allModels: {
-        async $allOperations({ model, operation, args, query }) {
-          // Track the operation
-          (fastify as FastifyInstance & { prismaStats: PrismaStats }).prismaStats.operationHistory.push({
-            model,
-            operation,
-            args,
-          });
-          
-          // Execute the original query
-          return query(args);
-        },
-      },
-    },
-  });
-  
   // Make the extended prisma client available to all routes
   fastify.decorate('prisma', extendedPrisma);
 
   // Gracefully close Prisma client when the app closes
   fastify.addHook('onClose', async () => {
-    await basePrisma.$disconnect();
+    await extendedPrisma.$disconnect();
   });
+}, {
+  name: 'db-plugin'
 });
 
 // TODO: Re-add the extension and error handler later for stats tracking

@@ -132,16 +132,11 @@ interface ChangeProfileArgs {
   };
 }
 
-interface SubscribeArgs {
-  id: string;
-  authorId: string;
-}
-
 const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma } = fastify;
   
   if (!prisma) {
     console.warn('Warning: Prisma client not available in GraphQL plugin');
-    return; // Skip GraphQL setup if no Prisma client
+    return;
   }
 
   // Create DataLoaders for N+1 problem solving

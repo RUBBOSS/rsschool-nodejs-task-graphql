@@ -12,8 +12,17 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
       },
     },
     async handler() {
-      // Access prismaStats directly without type casting
-      return fastify.prismaStats;
+      // Ensure prismaStats exists and operationHistory is available
+      if (!fastify.prismaStats) {
+        return {
+          operationHistory: []
+        };
+      }
+      
+      // Access prismaStats with proper fallback to ensure operationHistory is always available
+      return {
+        operationHistory: fastify.prismaStats.operationHistory || []
+      };
     },
   });
 };
