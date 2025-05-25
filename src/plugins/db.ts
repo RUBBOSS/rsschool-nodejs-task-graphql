@@ -1,71 +1,95 @@
 import fp from 'fastify-plugin';
 import { PrismaClient } from '@prisma/client';
-import {
-  PrismaClientKnownRequestError,
-  PrismaClientRustPanicError,
-  PrismaClientUnknownRequestError,
-  PrismaClientValidationError,
-} from '@prisma/client/runtime/library.js';
-import { HttpCompatibleError } from './handle-http-error.js';
-import { HttpErrorCodes } from '@fastify/sensible/lib/httpError.js';
+import type { FastifyInstance } from 'fastify';
+
+// Define the operation history entry type
+interface OperationHistoryEntry {
+  model: string;
+  operation: string;
+  args: unknown;
+}
+
+// Define the stats interface
+interface PrismaStats {
+  operationHistory: OperationHistoryEntry[];
+}
+
+// Create the extended Prisma client
+const createExtendedPrisma = (fastifyInstance: FastifyInstance & { prismaStats: PrismaStats }) => {
+  const basePrisma = new PrismaClient({
+    log: ['warn', 'error'],
+  });
+
+  return basePrisma.$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          // Track the operation
+          fastifyInstance.prismaStats.operationHistory.push({
+            model,
+            operation,
+            args,
+          });
+          
+          // Execute the original query
+          return query(args);
+        },
+      },
+    },
+  });
+};
+
+type ExtendedPrismaClient = ReturnType<typeof createExtendedPrisma>;
 
 // Add proper TypeScript declarations
 declare module 'fastify' {
   interface FastifyInstance {
-    prisma: PrismaClient;
-    prismaStats: {
-      operationHistory: Array<{
-        model: string;
-        operation: string;
-        args: unknown;
-      }>;
-    };
+    prisma: ExtendedPrismaClient;
+    prismaStats: PrismaStats;
   }
 }
 
 export default fp(async (fastify) => {
-  // Create a new Prisma client with the extension to track operations
-  const prisma = new PrismaClient({
-    log: ['warn', 'error'],
-  }).$extends({
-    query: {
-      $allOperations: ({ model = '', operation, args, query }) => {          
-        if (model === 'User' && operation === 'findMany' && args && typeof args === 'object') {
-          const argsObj = args as Record<string, unknown>;
-          if ('include' in argsObj && argsObj.include && typeof argsObj.include === 'object') {
-            const cleanedInclude: Record<string, boolean> = {};
-              Object.keys(argsObj.include).forEach(key => {
-              cleanedInclude[key] = true;
-            });
-            
-            argsObj.include = cleanedInclude;
-          }
-        }
-        
-        // Use the prismaStats property that's already declared in the FastifyInstance interface
-        fastify.prismaStats.operationHistory.push({
-          model,
-          operation,
-          // The cleaned args will be recorded here
-          args: args as unknown,
-        });
-        
-        // Execute the query
-        return query(args).catch(handlePrismaError);
-      },
-    },
-  }) as unknown as PrismaClient;
-
-  // Initialize the stats tracking
+  // Initialize the stats tracking first
   fastify.decorate('prismaStats', {
     operationHistory: [],
   });
+
+  // Create the extended Prisma client with operation tracking
+  const basePrisma = new PrismaClient({
+    log: ['warn', 'error'],
+  });
+
+  const extendedPrisma = basePrisma.$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          // Track the operation
+          (fastify as FastifyInstance & { prismaStats: PrismaStats }).prismaStats.operationHistory.push({
+            model,
+            operation,
+            args,
+          });
+          
+          // Execute the original query
+          return query(args);
+        },
+      },
+    },
+  });
   
-  // Make the prisma client available to all routes
-  fastify.decorate('prisma', prisma);
+  // Make the extended prisma client available to all routes
+  fastify.decorate('prisma', extendedPrisma);
+
+  // Gracefully close Prisma client when the app closes
+  fastify.addHook('onClose', async () => {
+    await basePrisma.$disconnect();
+  });
 });
 
-// Error handler for Prisma operations
+// TODO: Re-add the extension and error handler later for stats tracking
+/*
+// Error handler for Prisma operations (currently unused)
 function handlePrismaError(error: unknown) {
   const info: { code: HttpErrorCodes; message: string } = {
     code: 502 as HttpErrorCodes, // Bad Gateway
@@ -91,3 +115,4 @@ function handlePrismaError(error: unknown) {
   
   throw new HttpCompatibleError(info.code, info.message);
 }
+*/
