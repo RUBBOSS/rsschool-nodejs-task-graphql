@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { FastifyInstance } from 'fastify';
 import tap from 'tap';
+// @ts-ignore
 import helper from 'fastify-cli/helper.js';
 
 const __filename = fileURLToPath(import.meta.url);

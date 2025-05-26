@@ -44,8 +44,8 @@ await test('gql-loader-prime', async (t) => {
       ({ model, operation, args }) =>
         model === 'User' &&
         operation === 'findMany' &&
-        args.include.subscribedToUser && args.include.subscribedToUser.include && args.include.subscribedToUser.include.subscriber === true &&
-        args.include.userSubscribedTo && args.include.userSubscribedTo.include && args.include.userSubscribedTo.include.author === true,
+        args.include.subscribedToUser === true &&
+        args.include.userSubscribedTo === true,
     );
     t.ok(foundUserCall);
   });
@@ -89,7 +89,7 @@ await test('gql-loader-prime', async (t) => {
         ({ model, operation, args }) =>
           model === 'User' &&
           operation === 'findMany' &&
-          args.include.userSubscribedTo && args.include.userSubscribedTo.include && args.include.userSubscribedTo.include.author === true &&
+          args.include.userSubscribedTo === true &&
           Boolean(args.include.subscribedToUser) === false,
       );
       t.ok(foundUserCall);

@@ -1,108 +1,67 @@
 import fp from 'fastify-plugin';
 import { PrismaClient } from '@prisma/client';
-import type { FastifyInstance } from 'fastify';
-
-// Define the operation history entry type
-interface OperationHistoryEntry {
-  model: string;
-  operation: string;
-  args: unknown;
-}
-
-// Define the stats interface
-interface PrismaStats {
-  operationHistory: OperationHistoryEntry[];
-}
-
-// Create the extended Prisma client
-const createExtendedPrisma = (fastifyInstance: FastifyInstance & { prismaStats: PrismaStats }) => {
-  const basePrisma = new PrismaClient({
-    log: ['warn', 'error'],
-  });
-
-  return basePrisma.$extends({
-    query: {
-      $allModels: {
-        async $allOperations({ model, operation, args, query }) {
-          // Ensure prismaStats exists and has operationHistory array
-          if (!fastifyInstance.prismaStats) {
-            fastifyInstance.prismaStats = { operationHistory: [] };
-          }
-          if (!Array.isArray(fastifyInstance.prismaStats.operationHistory)) {
-            fastifyInstance.prismaStats.operationHistory = [];
-          }
-          
-          // Track the operation
-          fastifyInstance.prismaStats.operationHistory.push({
-            model,
-            operation,
-            args,
-          });
-          
-          // Execute the original query
-          return query(args);
-        },
-      },
-    },
-  });
-};
-
-type ExtendedPrismaClient = ReturnType<typeof createExtendedPrisma>;
-
-// Add proper TypeScript declarations
-declare module 'fastify' {
-  interface FastifyInstance {
-    prisma: ExtendedPrismaClient;
-    prismaStats: PrismaStats;
-  }
-}
+import {
+  PrismaClientKnownRequestError,
+  PrismaClientRustPanicError,
+  PrismaClientUnknownRequestError,
+  PrismaClientValidationError,
+} from '@prisma/client/runtime/library.js';
+import { HttpCompatibleError } from './handle-http-error.js';
+import { HttpErrorCodes } from '@fastify/sensible/lib/httpError.js';
+import { Static } from '@sinclair/typebox';
+import { prismaStatsSchema } from '../routes/stats/schemas.js';
 
 export default fp(async (fastify) => {
-  // Initialize the stats tracking first - ensure it exists before creating extended Prisma
+  const prisma = new PrismaClient({
+    log: ['warn', 'error'],
+  }).$extends({
+    query: {
+      $allOperations: ({ model = '', operation, args, query }) => {
+        fastify.prismaStats.operationHistory.push({
+          model,
+          operation,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          args,
+        });
+        return query(args).catch(handlePrismaError);
+      },
+    },
+  }) as unknown as PrismaClient;
+
   fastify.decorate('prismaStats', {
     operationHistory: [],
   });
-
-  // Use the extended Prisma client with operation tracking
-  const extendedPrisma = createExtendedPrisma(fastify as FastifyInstance & { prismaStats: PrismaStats });
-
-  // Make the extended prisma client available to all routes
-  fastify.decorate('prisma', extendedPrisma);
-
-  // Gracefully close Prisma client when the app closes
-  fastify.addHook('onClose', async () => {
-    await extendedPrisma.$disconnect();
-  });
-}, {
-  name: 'db-plugin'
+  fastify.decorate('prisma', prisma);
 });
 
-// TODO: Re-add the extension and error handler later for stats tracking
-/*
-// Error handler for Prisma operations (currently unused)
 function handlePrismaError(error: unknown) {
-  const info: { code: HttpErrorCodes; message: string } = {
-    code: 502 as HttpErrorCodes, // Bad Gateway
-    message: 'Unexpected database error.',
+  const info: { code: HttpErrorCodes; mes: string } = {
+    code: 502,
+    mes: 'Unexpected database error.',
   };
 
   if (error instanceof PrismaClientKnownRequestError) {
-    info.message = error.message;
-    info.code = 422 as HttpErrorCodes; // Unprocessable Entity
+    info.mes = error.message;
+    info.code = 422;
   }
   if (error instanceof PrismaClientValidationError) {
-    info.message = error.message;
-    info.code = 400 as HttpErrorCodes; // Bad Request
+    info.mes = error.message;
+    info.code = 400;
   }
-  if (error instanceof PrismaClientUnknownRequestError) {
-    info.message = error.message;
-    info.code = 500 as HttpErrorCodes; // Internal Server Error
+  if (
+    error instanceof PrismaClientUnknownRequestError ||
+    error instanceof PrismaClientRustPanicError
+  ) {
+    info.mes = error.message;
+    info.code = 502;
   }
-  if (error instanceof PrismaClientRustPanicError) {
-    info.message = error.message;
-    info.code = 500 as HttpErrorCodes; // Internal Server Error
-  }
-  
-  throw new HttpCompatibleError(info.code, info.message);
+
+  throw new HttpCompatibleError(info.code, info.mes);
 }
-*/
+
+declare module 'fastify' {
+  export interface FastifyInstance {
+    prisma: PrismaClient;
+    prismaStats: Static<typeof prismaStatsSchema>;
+  }
+}
