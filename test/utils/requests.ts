@@ -177,7 +177,6 @@ export async function createProfile(
       yearOfBirth: yearOfBirth || 1990 + Math.floor(Math.random() * 30)
     };
   } else {
-    // Called with full profileData object
     profileData = userIdOrProfileData;
   }
   
@@ -194,14 +193,12 @@ export async function createPost(app: FastifyInstance, authorIdOrPostData: strin
   let postData: { authorId: string; title: string; content: string };
   
   if (typeof authorIdOrPostData === 'string') {
-    // Called as createPost(app, userId) from test
     postData = {
       authorId: authorIdOrPostData,
       title: title || `Test Post ${Date.now()}`,
       content: content || `Test content for post ${Date.now()}`
     };
   } else {
-    // Called with full postData object
     postData = authorIdOrPostData;
   }
   

@@ -14,7 +14,12 @@ import {
   GraphQLEnumType,
   parse,
   validate,
-  GraphQLResolveInfo
+  GraphQLResolveInfo,
+  Kind,
+  FieldNode,
+  SelectionNode,
+  SelectionSetNode,
+  FragmentDefinitionNode
 } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 import { UUIDType } from './types/uuid.js';
@@ -360,16 +365,61 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
       },
       users: {
         type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(UserType))),
-        resolve: async (_parent: unknown, _args: unknown, context: GraphQLContext, _info: GraphQLResolveInfo) => {
-          // Simple approach - always include subscriptions for now to avoid complex parsing
+        resolve: async (_parent: unknown, _args: unknown, context: GraphQLContext, info: GraphQLResolveInfo) => {
+          // Parse GraphQL resolve info to determine which relations are requested
+          const requestedFields = new Set<string>();
+          
+          function extractFields(selectionSet: SelectionSetNode | undefined) {
+            if (selectionSet && selectionSet.selections) {
+              selectionSet.selections.forEach((selection: SelectionNode) => {
+                if (selection.kind === Kind.FIELD) {
+                  requestedFields.add(selection.name.value);
+                  // Recursively extract fields from sub-selections
+                  if (selection.selectionSet) {
+                    extractFields(selection.selectionSet);
+                  }
+                } else if (selection.kind === Kind.FRAGMENT_SPREAD) {
+                  const fragmentName = selection.name.value;
+                  const fragment = info.fragments[fragmentName] as FragmentDefinitionNode | undefined;
+                  if (fragment) {
+                    extractFields(fragment.selectionSet);
+                  }
+                } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+                  extractFields(selection.selectionSet);
+                }
+              });
+            }
+          }
+
+          info.fieldNodes.forEach((fieldNode: FieldNode) => {
+            extractFields(fieldNode.selectionSet);
+          });
+
+          // Determine which relations to include based on requested fields
+          const includeUserSubscribedTo = requestedFields.has('userSubscribedTo');
+          const includeSubscribedToUser = requestedFields.has('subscribedToUser');
+
           type UserWithSubscriptions = User & {
             userSubscribedTo?: Array<{ author: User }>;
             subscribedToUser?: Array<{ subscriber: User }>;
-          };          const users = await context.prisma.user.findMany({
-            include: {
-              userSubscribedTo: { include: { author: true } },
-              subscribedToUser: { include: { subscriber: true } }
-            }
+          };
+
+          // Build include object dynamically based on requested fields
+          type UserInclude = {
+            userSubscribedTo?: { include: { author: boolean } };
+            subscribedToUser?: { include: { subscriber: boolean } };
+          };
+          
+          const include: UserInclude = {};
+          if (includeUserSubscribedTo) {
+            include.userSubscribedTo = { include: { author: true } };
+          }
+          if (includeSubscribedToUser) {
+            include.subscribedToUser = { include: { subscriber: true } };
+          }
+
+          const users = await context.prisma.user.findMany({
+            include
           }) as UserWithSubscriptions[];
 
           // Prime the DataLoader cache with fetched users and their subscription relationships
