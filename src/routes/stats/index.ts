@@ -1,9 +1,10 @@
 import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { prismaStatsSchema } from './schemas.js';
 
+// Module declaration is already provided in db.ts, we can rely on it
 const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
   fastify.route({
-    url: '/prisma',
+    url: '/',
     method: 'GET',
     schema: {
       response: {
@@ -11,7 +12,17 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
       },
     },
     async handler() {
-      return fastify.prismaStats;
+      // Ensure prismaStats exists and operationHistory is available
+      if (!fastify.prismaStats) {
+        return {
+          operationHistory: []
+        };
+      }
+      
+      // Access prismaStats with proper fallback to ensure operationHistory is always available
+      return {
+        operationHistory: fastify.prismaStats.operationHistory || []
+      };
     },
   });
 };

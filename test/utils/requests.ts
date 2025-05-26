@@ -4,7 +4,6 @@ import {
   createGqlResponseSchema,
   gqlResponseSchema,
 } from '../../src/routes/graphql/schemas.js';
-import { genCreatePostDto, genCreateProfileDto, genCreateUserDto } from './fake.js';
 import { userSchema } from '../../src/routes/users/schemas.js';
 import { profileSchema } from '../../src/routes/profiles/schemas.js';
 import { postSchema } from '../../src/routes/posts/schemas.js';
@@ -101,40 +100,6 @@ export async function getMemberType(app: FastifyInstance, id: string) {
   return { res, body };
 }
 
-export async function createUser(app: FastifyInstance) {
-  const res = await app.inject({
-    url: '/users',
-    method: 'POST',
-    payload: genCreateUserDto(),
-  });
-  const body = (await res.json()) as UserBody;
-  return { res, body };
-}
-
-export async function createProfile(
-  app: FastifyInstance,
-  userId: string,
-  memberTypeId: MemberTypeId,
-) {
-  const res = await app.inject({
-    url: '/profiles',
-    method: 'POST',
-    payload: genCreateProfileDto(userId, memberTypeId),
-  });
-  const body = (await res.json()) as ProfileBody;
-  return { res, body };
-}
-
-export async function createPost(app: FastifyInstance, authorId: string) {
-  const res = await app.inject({
-    url: '/posts',
-    method: 'POST',
-    payload: genCreatePostDto(authorId),
-  });
-  const body = (await res.json()) as PostBody;
-  return { res, body };
-}
-
 export async function subscribeTo(
   app: FastifyInstance,
   userId: string,
@@ -173,9 +138,74 @@ export async function unsubscribeFrom(
 
 export async function getPrismaStats(app: FastifyInstance) {
   const res = await app.inject({
-    url: '/stats/prisma',
+    url: '/stats',
     method: 'GET',
   });
   const body = (await res.json()) as Static<typeof prismaStatsSchema>;
+  return { res, body };
+}
+
+export async function createUser(app: FastifyInstance, userData?: { name: string; balance: number }) {
+  const defaultUserData = {
+    name: `test-user-${Date.now()}`,
+    balance: Math.random() * 100
+  };
+  const res = await app.inject({
+    url: '/users',
+    method: 'POST',
+    payload: userData || defaultUserData,
+  });
+  const body = (await res.json()) as UserBody;
+  return { res, body };
+}
+
+export async function createProfile(
+  app: FastifyInstance,
+  userIdOrProfileData: string | { userId: string; memberTypeId: MemberTypeId; isMale: boolean; yearOfBirth: number },
+  memberTypeId?: MemberTypeId,
+  isMale?: boolean,
+  yearOfBirth?: number
+) {
+  let profileData: { userId: string; memberTypeId: MemberTypeId; isMale: boolean; yearOfBirth: number };
+  
+  if (typeof userIdOrProfileData === 'string') {
+    profileData = {
+      userId: userIdOrProfileData,
+      memberTypeId: memberTypeId || MemberTypeId.BASIC,
+      isMale: isMale ?? Math.random() > 0.5,
+      yearOfBirth: yearOfBirth || 1990 + Math.floor(Math.random() * 30)
+    };
+  } else {
+    profileData = userIdOrProfileData;
+  }
+  
+  const res = await app.inject({
+    url: '/profiles',
+    method: 'POST',
+    payload: profileData,
+  });
+  const body = (await res.json()) as ProfileBody;
+  return { res, body };
+}
+
+export async function createPost(app: FastifyInstance, authorIdOrPostData: string | { authorId: string; title: string; content: string }, title?: string, content?: string) {
+  let postData: { authorId: string; title: string; content: string };
+  
+  if (typeof authorIdOrPostData === 'string') {
+    postData = {
+      authorId: authorIdOrPostData,
+      title: title || `Test Post ${Date.now()}`,
+      content: content || `Test content for post ${Date.now()}`
+    };
+  } else {
+    postData = authorIdOrPostData;
+  }
+  
+  const res = await app.inject({
+    url: '/posts',
+    method: 'POST',
+    payload: postData,
+  });
+  const body = (await res.json()) as PostBody;
   return { res, body };
 }

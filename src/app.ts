@@ -8,22 +8,33 @@ const __dirname = dirname(__filename);
 
 const opts: Partial<AutoloadPluginOptions> = {
   ignoreFilter: (path: string) => {
-    const isFileNested = (path.match(new RegExp('/', 'g')) ?? []).length > 1;
-    if (!isFileNested) {
+    const normalizedPath = path.replace(/\\/g, '/');
+    const pathSegments = normalizedPath.split('/').filter(segment => segment !== '');
+    
+    if (normalizedPath.includes('.fixed.js')) {
+      return true;
+    }
+    
+    if (pathSegments.length <= 1) {
       return false;
     }
-    return !path.endsWith('index.js');
+    
+    // For nested files (in subdirectories), only load index.js files
+    const filename = pathSegments[pathSegments.length - 1];
+    return filename !== 'index.js';
   },
   forceESM: true,
 };
 
 const app: FastifyPluginAsync = async (fastify, _) => {
-  void fastify.register(AutoLoad, {
+  // Load plugins first and wait for them to complete
+  await fastify.register(AutoLoad, {
     dir: join(__dirname, 'plugins'),
     ...opts,
   });
 
-  void fastify.register(AutoLoad, {
+  // Then load routes after plugins are ready
+  await fastify.register(AutoLoad, {
     dir: join(__dirname, 'routes'),
     routeParams: true,
     ...opts,
