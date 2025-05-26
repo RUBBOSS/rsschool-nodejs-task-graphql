@@ -169,7 +169,6 @@ export async function createProfile(
   let profileData: { userId: string; memberTypeId: MemberTypeId; isMale: boolean; yearOfBirth: number };
   
   if (typeof userIdOrProfileData === 'string') {
-    // Called as createProfile(app, userId, memberTypeId) from test
     profileData = {
       userId: userIdOrProfileData,
       memberTypeId: memberTypeId || MemberTypeId.BASIC,

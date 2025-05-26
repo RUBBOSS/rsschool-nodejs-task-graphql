@@ -19,14 +19,12 @@ import {
   FieldNode,
   SelectionNode,
   SelectionSetNode,
-  FragmentDefinitionNode
 } from 'graphql';
 import depthLimit from 'graphql-depth-limit';
 import { UUIDType } from './types/uuid.js';
 import DataLoader from 'dataloader';
 import type { User, Post, Profile, MemberType } from '@prisma/client';
 
-// Define extended types for relationships
 type SubscriberOnAuthor = {
   subscriberId: string;
   authorId: string;
@@ -34,7 +32,6 @@ type SubscriberOnAuthor = {
   author: User;
 };
 
-// Define a minimal Prisma interface for our needs
 interface PrismaLike {
   user: {
     findMany: (args?: unknown) => Promise<User[]>;
@@ -68,7 +65,6 @@ interface PrismaLike {
   };
 }
 
-// Define context type
 interface GraphQLContext {
   loaders: {
     users: DataLoader<string, User | null>;
@@ -144,7 +140,6 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
     return;
   }
 
-  // Create DataLoaders for N+1 problem solving
   const createLoaders = (): GraphQLContext['loaders'] => ({
     users: new DataLoader(async (userIds: readonly string[]) => {
       const users = await prisma.user.findMany({
@@ -209,7 +204,6 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
     })
   });
 
-  // Define GraphQL Enums
   const MemberTypeIdEnum = new GraphQLEnumType({
     name: 'MemberTypeId',
     values: {
@@ -218,7 +212,6 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
     }
   });
 
-  // Define GraphQL Input Types
   const CreateUserInputType = new GraphQLInputObjectType({
     name: 'CreateUserInput',
     fields: {
@@ -271,7 +264,6 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
     }
   });
 
-  // Define GraphQL Object Types
   const MemberTypeType = new GraphQLObjectType({
     name: 'MemberType',
     fields: {
@@ -279,7 +271,8 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
       discount: { type: new GraphQLNonNull(GraphQLFloat) },
       postsLimitPerMonth: { type: new GraphQLNonNull(GraphQLInt) }
     }
-  });  // Define GraphQL Object Types with proper forward references
+  });
+
   const UserType: GraphQLObjectType = new GraphQLObjectType({
     name: 'User',
     fields: () => ({
@@ -293,7 +286,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
         }
       },
       posts: {
-        type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PostType))),
+        type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PostType))), // PostType will be defined below
         resolve: async (parent: User, _args: unknown, context: GraphQLContext) => {
           return context.loaders.postsByAuthor.load(parent.id);
         }
@@ -319,7 +312,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
       id: { type: new GraphQLNonNull(UUIDType) },
       title: { type: new GraphQLNonNull(GraphQLString) },
       content: { type: new GraphQLNonNull(GraphQLString) },
-      user: {
+      author: {
         type: new GraphQLNonNull(UserType),
         resolve: async (parent: Post, _args: unknown, context: GraphQLContext) => {
           return context.loaders.users.load(parent.authorId);
@@ -338,7 +331,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
         type: new GraphQLNonNull(MemberTypeType),
         resolve: async (parent: Profile, _args: unknown, context: GraphQLContext) => {
           return context.loaders.memberTypes.load(parent.memberTypeId);
-        }
+        },
       },
       user: {
         type: new GraphQLNonNull(UserType),
@@ -348,7 +341,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
       }
     })
   });
-  // Define Query type
+
   const QueryType = new GraphQLObjectType({
     name: 'Query',
     fields: {      memberType: {
@@ -366,86 +359,78 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
       users: {
         type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(UserType))),
         resolve: async (_parent: unknown, _args: unknown, context: GraphQLContext, info: GraphQLResolveInfo) => {
-          // Parse GraphQL resolve info to determine which relations are requested
+          // Determine includes based on directly requested fields or fields within fragments
           const requestedFields = new Set<string>();
-          
-          function extractFields(selectionSet: SelectionSetNode | undefined) {
+          function extractFieldsFromSelection(selectionSet: SelectionSetNode | undefined) {
             if (selectionSet && selectionSet.selections) {
               selectionSet.selections.forEach((selection: SelectionNode) => {
                 if (selection.kind === Kind.FIELD) {
                   requestedFields.add(selection.name.value);
-                  // Recursively extract fields from sub-selections
                   if (selection.selectionSet) {
-                    extractFields(selection.selectionSet);
+                    extractFieldsFromSelection(selection.selectionSet);
                   }
                 } else if (selection.kind === Kind.FRAGMENT_SPREAD) {
                   const fragmentName = selection.name.value;
-                  const fragment = info.fragments[fragmentName] as FragmentDefinitionNode | undefined;
+                  const fragment = info.fragments[fragmentName]; // Removed redundant cast
                   if (fragment) {
-                    extractFields(fragment.selectionSet);
+                    extractFieldsFromSelection(fragment.selectionSet);
                   }
                 } else if (selection.kind === Kind.INLINE_FRAGMENT) {
-                  extractFields(selection.selectionSet);
+                  extractFieldsFromSelection(selection.selectionSet);
                 }
               });
             }
           }
 
           info.fieldNodes.forEach((fieldNode: FieldNode) => {
-            extractFields(fieldNode.selectionSet);
+            extractFieldsFromSelection(fieldNode.selectionSet);
           });
 
-          // Determine which relations to include based on requested fields
           const includeUserSubscribedTo = requestedFields.has('userSubscribedTo');
           const includeSubscribedToUser = requestedFields.has('subscribedToUser');
 
-          type UserWithSubscriptions = User & {
-            userSubscribedTo?: Array<{ author: User }>;
-            subscribedToUser?: Array<{ subscriber: User }>;
+          type UserWithJoinTableIds = User & {
+            userSubscribedTo?: Array<{ authorId: string }>;
+            subscribedToUser?: Array<{ subscriberId: string }>;
           };
 
-          // Build include object dynamically based on requested fields
-          type UserInclude = {
-            userSubscribedTo?: { include: { author: boolean } };
-            subscribedToUser?: { include: { subscriber: boolean } };
+          const prismaQueryIncludeArgs: { userSubscribedTo: boolean; subscribedToUser: boolean } = {
+            userSubscribedTo: includeUserSubscribedTo,
+            subscribedToUser: includeSubscribedToUser,
           };
-          
-          const include: UserInclude = {};
-          if (includeUserSubscribedTo) {
-            include.userSubscribedTo = { include: { author: true } };
-          }
-          if (includeSubscribedToUser) {
-            include.subscribedToUser = { include: { subscriber: true } };
-          }
 
-          const users = await context.prisma.user.findMany({
-            include
-          }) as UserWithSubscriptions[];
+          const usersFromPrisma = await context.prisma.user.findMany({
+            include: prismaQueryIncludeArgs,
+          }) as UserWithJoinTableIds[];
 
-          // Prime the DataLoader cache with fetched users and their subscription relationships
-          users.forEach((user: UserWithSubscriptions) => {
-            // Prime user cache
-            context.loaders.users.prime(user.id, {
-              id: user.id,
-              name: user.name,
-              balance: user.balance
-            });
-            
-            if (user.userSubscribedTo) {
-              const subscribedToUsers = user.userSubscribedTo.map(sub => sub.author);
-              context.loaders.userSubscribedTo.prime(user.id, subscribedToUsers);
+          usersFromPrisma.forEach((user) => {
+            context.loaders.users.prime(user.id, user as User);
+
+            if (includeUserSubscribedTo) {
+              const authorsForThisUser: User[] = [];
+              if (user.userSubscribedTo) {
+                user.userSubscribedTo.forEach(sub => {
+                  authorsForThisUser.push({ id: sub.authorId } as User);
+                });
+              }
+              context.loaders.userSubscribedTo.prime(user.id, authorsForThisUser);
             }
-            
-            if (user.subscribedToUser) {
-              const subscriberUsers = user.subscribedToUser.map(sub => sub.subscriber);
-              context.loaders.subscribedToUser.prime(user.id, subscriberUsers);
+
+            if (includeSubscribedToUser) {
+              const subscribersForThisUser: User[] = [];
+              if (user.subscribedToUser) {
+                user.subscribedToUser.forEach(sub => {
+                  subscribersForThisUser.push({ id: sub.subscriberId } as User);
+                });
+              }
+              context.loaders.subscribedToUser.prime(user.id, subscribersForThisUser);
             }
           });
 
-          return users.map((user: UserWithSubscriptions) => ({
+          return usersFromPrisma.map(user => ({
             id: user.id,
             name: user.name,
-            balance: user.balance
+            balance: user.balance,
           }));
         }
       },
@@ -453,8 +438,10 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
         type: UserType,
         args: { id: { type: new GraphQLNonNull(UUIDType) } },
         resolve: async (_parent: unknown, args: IdArgs, context: GraphQLContext) => {
-          return context.loaders.users.load(args.id);        }
-      },      posts: {
+          return context.loaders.users.load(args.id);
+        }
+      },
+      posts: {
         type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PostType))),
         resolve: async (_parent: unknown, _args: unknown, context: GraphQLContext) => {
           return await context.prisma.post.findMany();
@@ -482,7 +469,6 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
     }
   });
 
-  // Define Mutation type
   const MutationType = new GraphQLObjectType({
     name: 'Mutation',
     fields: {
@@ -606,7 +592,6 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
     }
   });
 
-  // Create the schema
   const schema = new GraphQLSchema({
     query: QueryType,
     mutation: MutationType
@@ -623,7 +608,6 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
     },    async handler(req) {
       const { query, variables } = req.body as { query: string; variables?: Record<string, unknown> };
 
-      // Parse and validate query
       const document = parse(query);
       const validationErrors = validate(schema, document, [depthLimit(5)]);
 
@@ -635,12 +619,11 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {  const { prisma }
             path: error.path,
           })),
         };
-      }      // Create context with loaders
+      }
       const context: GraphQLContext = {
         loaders: createLoaders(),
         prisma: prisma as unknown as PrismaLike
       };
-        // Execute GraphQL query
       const result = await graphql({
         schema,
         source: query,
